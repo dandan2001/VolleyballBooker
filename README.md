@@ -18,6 +18,8 @@ uv run main.py --date 2026-07-10 --time 6:00pm --duration 2
 - `--dry-run` shows the plan without booking.
 - `--yes` skips the final confirmation prompt.
 
+Run from the repo root — failures/ and receipts/ paths are relative to the working directory.
+
 Failures save a screenshot + HTML to `failures/`; successful receipts to `receipts/`.
 
 ## Known limitation

@@ -4,6 +4,7 @@ from __future__ import annotations
 import os
 import random
 import re
+import sys
 import time
 from dataclasses import dataclass
 from datetime import date as date_type
@@ -337,9 +338,9 @@ class CheckoutSession:
         base = f"failures/{ts}_{self.label}_{stage}"
         try:
             self.driver.save_screenshot(base + ".png")
-            Path(base + ".html").write_text(self.driver.page_source)
+            Path(base + ".html").write_text(self.driver.page_source, encoding="utf-8")
         except Exception:
-            pass
+            print(f"warning: failed to save artifacts for {stage}", file=sys.stderr)
         return base
 
     def _fill(self, el_id: str, value: str):
@@ -447,50 +448,61 @@ class CheckoutSession:
         d = self.driver
         seg = self.segment
         amount = ""
-        els = d.find_elements(By.CSS_SELECTOR, ".booking_total")
-        if els:
-            amount = els[0].text.strip()
-
-        form = d.find_element(By.ID, "personal_trainer_payment_form")
-        d.find_element(By.ID, "confirm_submit").click()
+        try:
+            els = d.find_elements(By.CSS_SELECTOR, ".booking_total")
+            if els:
+                amount = els[0].text.strip()
+        except Exception:
+            pass
 
         try:
-            WebDriverWait(d, 90).until(EC.staleness_of(form))
-        except TimeoutException:
-            errors = [
-                e.text.strip()
-                for e in d.find_elements(By.CSS_SELECTOR, "span.error")
-                if e.text.strip() and e.text.strip() != "\xa0"
-            ]
-            art = self._capture("validate")
+            form = d.find_element(By.ID, "personal_trainer_payment_form")
+            d.find_element(By.ID, "confirm_submit").click()
+
+            try:
+                WebDriverWait(d, 90).until(EC.staleness_of(form))
+            except TimeoutException:
+                errors = [
+                    e.text.strip()
+                    for e in d.find_elements(By.CSS_SELECTOR, "span.error")
+                    if e.text.strip() and e.text.strip() != "\xa0"
+                ]
+                art = self._capture("validate")
+                return BookingResult(
+                    False, "validate",
+                    "; ".join(errors) or f"no navigation after submit ({art}.html)",
+                    seg, self.account.email, amount, art,
+                )
+
+            WebDriverWait(d, 30).until(
+                lambda drv: drv.execute_script("return document.readyState") == "complete"
+            )
+            page = d.page_source
+            text = re.sub(r"\s+", " ", d.find_element(By.TAG_NAME, "body").text)
+            if 'id="personal_trainer_payment_form"' in page:
+                errors = [
+                    e.text.strip()
+                    for e in d.find_elements(By.CSS_SELECTOR, "span.error")
+                    if e.text.strip() and e.text.strip() != "\xa0"
+                ]
+                art = self._capture("payment_rejected")
+                return BookingResult(
+                    False, "payment",
+                    "; ".join(errors) or f"payment page re-shown ({art}.html)",
+                    seg, self.account.email, amount, art,
+                )
+
+            ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+            Path("receipts").mkdir(exist_ok=True)
+            receipt = f"receipts/{ts}_{self.label}.html"
+            Path(receipt).write_text(page, encoding="utf-8")
             return BookingResult(
-                False, "validate",
-                "; ".join(errors) or f"no navigation after submit ({art}.html)",
+                True, "done", text[:600], seg, self.account.email, amount, receipt
+            )
+        except Exception as e:
+            art = self._capture("submit_crash")
+            return BookingResult(
+                False, "submit_crash",
+                f"unexpected error: {e!r} ({art}.html)",
                 seg, self.account.email, amount, art,
             )
-
-        WebDriverWait(d, 30).until(
-            lambda drv: drv.execute_script("return document.readyState") == "complete"
-        )
-        page = d.page_source
-        text = re.sub(r"\s+", " ", d.find_element(By.TAG_NAME, "body").text)
-        if 'id="personal_trainer_payment_form"' in page:
-            errors = [
-                e.text.strip()
-                for e in d.find_elements(By.CSS_SELECTOR, "span.error")
-                if e.text.strip() and e.text.strip() != "\xa0"
-            ]
-            art = self._capture("payment_rejected")
-            return BookingResult(
-                False, "payment",
-                "; ".join(errors) or f"payment page re-shown ({art}.html)",
-                seg, self.account.email, amount, art,
-            )
-
-        ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-        Path("receipts").mkdir(exist_ok=True)
-        receipt = f"receipts/{ts}_{self.label}.html"
-        Path(receipt).write_text(page)
-        return BookingResult(
-            True, "done", text[:600], seg, self.account.email, amount, receipt
-        )

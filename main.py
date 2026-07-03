@@ -14,7 +14,6 @@ from booker import (
     BookingError,
     Card,
     CheckoutSession,
-    fmt_time,
     parse_time,
     split_segments,
 )
