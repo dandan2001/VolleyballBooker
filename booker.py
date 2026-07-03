@@ -103,3 +103,89 @@ def parse_iframe(html: str, date: date_type) -> list[Court]:
         name = re.sub(r"\s+", " ", m[2]).strip()
         courts.append(Court(int(m[1]), name, busy))
     return courts
+
+
+@dataclass
+class PlannedSegment:
+    court: Court
+    date_str: str
+    start_min: int
+    minutes: int
+    account_prefix: str
+
+    def describe(self) -> str:
+        return (
+            f"{self.court.name}: {fmt_time(self.start_min)} for {self.minutes} min "
+            f"on {self.date_str} (account: {self.account_prefix})"
+        )
+
+
+_ACCOUNT_ORDER = ["PRIMARY", "BACKUP"]
+
+
+class AvailabilityScanner:
+    def __init__(self):
+        self.session = requests.Session()
+        self.session.headers["User-Agent"] = USER_AGENT
+
+    def fetch_courts(self, date_str: str) -> list[Court]:
+        r = self.session.get(IFRAME_URL.format(date=date_str), timeout=30)
+        if r.status_code != 200:
+            raise BookingError("scan", f"iframe fetch returned HTTP {r.status_code}")
+        return parse_iframe(r.text, datetime.strptime(date_str, "%Y-%m-%d").date())
+
+    def duration_allowed(
+        self, facility_id: int, date_str: str, start_min: int, minutes: int
+    ) -> bool:
+        h, mi = divmod(start_min, 60)
+        r = self.session.post(
+            DURATION_URL,
+            data={"facility_id": facility_id, "datetime": f"{date_str} {h:02d}:{mi:02d}:00"},
+            headers={"X-Requested-With": "XMLHttpRequest"},
+            timeout=30,
+        )
+        if r.status_code != 200:
+            raise BookingError("scan", f"duration check returned HTTP {r.status_code}")
+        allowed = r.json()
+        if not isinstance(allowed, list):
+            return False
+        return minutes in [abs(int(x)) for x in allowed]
+
+    def plan_same_court(self, courts, date_str, start_min, seg_minutes):
+        total = sum(seg_minutes)
+        for court in courts:
+            if court.free(start_min, start_min + total):
+                plan, offset = [], 0
+                for i, minutes in enumerate(seg_minutes):
+                    plan.append(
+                        PlannedSegment(
+                            court, date_str, start_min + offset, minutes, _ACCOUNT_ORDER[i]
+                        )
+                    )
+                    offset += minutes
+                return plan
+        return None
+
+    def plan_cross_court(self, courts, date_str, start_min, seg_minutes):
+        plan, offset = [], 0
+        for i, minutes in enumerate(seg_minutes):
+            seg_start = start_min + offset
+            court = next(
+                (c for c in courts if c.free(seg_start, seg_start + minutes)), None
+            )
+            if court is None:
+                return None
+            plan.append(PlannedSegment(court, date_str, seg_start, minutes, _ACCOUNT_ORDER[i]))
+            offset += minutes
+        return plan
+
+    def verify_plan(self, plan: list[PlannedSegment]) -> None:
+        for seg in plan:
+            if not self.duration_allowed(
+                seg.court.facility_id, seg.date_str, seg.start_min, seg.minutes
+            ):
+                raise BookingError(
+                    "verify",
+                    f"server rejects {seg.minutes} min at {fmt_time(seg.start_min)} "
+                    f"on {seg.court.name}",
+                )
