@@ -14,7 +14,6 @@ from urllib.parse import urlencode
 import requests
 from selenium import webdriver
 from selenium.common.exceptions import TimeoutException
-from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.support.ui import Select, WebDriverWait
@@ -33,10 +32,9 @@ CLOSE_MIN = 23 * 60
 
 USER_AGENT = (
     "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
-    "(KHTML, like Gecko) Chrome/149.0.0.0 Safari/537.36"
+    "(KHTML, like Gecko) Chrome/150.0.0.0 Safari/537.36"
 )
-CHROMIUM_BINARY = "/snap/bin/chromium"
-CHROMEDRIVER = "/snap/bin/chromium.chromedriver"
+CHROME_BINARY = "/usr/bin/google-chrome"
 
 
 class BookingError(Exception):
@@ -306,7 +304,7 @@ class CheckoutSession:
 
     def start(self):
         opts = webdriver.ChromeOptions()
-        opts.binary_location = CHROMIUM_BINARY
+        opts.binary_location = CHROME_BINARY
         opts.add_argument("--headless=new")
         opts.add_argument("--no-sandbox")
         opts.add_argument("--disable-dev-shm-usage")
@@ -318,7 +316,7 @@ class CheckoutSession:
         opts.add_experimental_option("excludeSwitches", ["enable-automation"])
         opts.add_experimental_option("useAutomationExtension", False)
         opts.set_capability("unhandledPromptBehavior", "accept")
-        self.driver = webdriver.Chrome(service=Service(CHROMEDRIVER), options=opts)
+        self.driver = webdriver.Chrome(options=opts)
         self.driver.execute_cdp_cmd(
             "Page.addScriptToEvaluateOnNewDocument",
             {"source": "Object.defineProperty(navigator,'webdriver',{get:()=>undefined})"},
